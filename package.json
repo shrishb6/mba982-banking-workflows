@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "start": "tsx index.ts"
     "build": "tsc",
     "worker": "tsx src/worker.ts",
     "client": "tsx src/client.ts",
@@ -8,5 +9,8 @@
     "dev:client": "tsx watch src/client.ts",
     "dev:server": "tsx watch index.ts",
     "test:modern-v1": "tsx src/test-modern-v1.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.19.4"
   }
 }
