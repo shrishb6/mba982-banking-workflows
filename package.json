@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "start": "tsx index.ts"
+    "start": "tsx index.ts",
     "build": "tsc",
     "worker": "tsx src/worker.ts",
     "client": "tsx src/client.ts",
