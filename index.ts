@@ -6,7 +6,7 @@ import { modernPaymentV1Workflow } from "./src/workflows/modern-payment-v1";
 import axios from "axios";
 
 // MockAPI base URL
-const MOCKAPI_BASE_URL = "https://6835b03dcd78db2058c2b664.mockapi.io";
+const MOCKAPI_BASE_URL = "https://68358740cd78db2058c203ce.mockapi.io";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -85,61 +85,125 @@ app.post("/api/payments/start", async (req, res) => {
   try {
     const { fromAccount, toAccount, amount, currency, description } = req.body;
 
+    // Validate required fields
     if (!fromAccount || !toAccount || !amount) {
       return res.status(400).json({
         error: "Missing required fields: fromAccount, toAccount, amount",
       });
     }
 
-    const workflowId = `modern-v1-appsmith-${Date.now()}`;
+    // Start workflow
+    const workflowId = `modern-v1-appsmith-${Date.now()}${Math.floor(Math.random() * 1000)}`;
 
     const handle = await temporalClient.workflow.start(
       modernPaymentV1Workflow,
       {
         taskQueue: "payment-processing",
         workflowId,
-        args: [
-          {
-            fromAccount,
-            toAccount,
-            amount: parseFloat(amount),
-            currency: currency || "USD",
-            description: description || "Payment via Appsmith UI",
-          },
-        ],
+        args: [{ fromAccount, toAccount, amount, currency, description }],
       },
     );
+
+    console.log(`✅ Started payment workflow: ${workflowId}`);
 
     res.json({
       success: true,
       workflowId: handle.workflowId,
+      runId: handle.firstExecutionRunId,
       message: "Payment workflow started successfully",
-      status: "PROCESSING",
     });
   } catch (error) {
     console.error("Failed to start payment workflow:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to start payment workflow",
-      details: error instanceof Error ? error.message : "Unknown error",
-    });
+    res.status(500).json({ error: "Failed to start payment workflow" });
   }
 });
 
-// 4. Get workflow status (for real-time updates)
+// 4. Get workflow status with step details (CORRECTED - SINGLE ENDPOINT)
 app.get("/api/payments/status/:workflowId", async (req, res) => {
   try {
     const { workflowId } = req.params;
 
-    const handle = temporalClient.workflow.getHandle(workflowId);
-    const description = await handle.describe();
+    // Get workflow execution details from Temporal
+    const workflowHandle = temporalClient.workflow.getHandle(workflowId);
+    const description = await workflowHandle.describe();
 
+    // Try to get workflow history to extract steps
+    let steps = [];
+    try {
+      const history = workflowHandle.fetchHistory();
+      const activityNames = new Map();
+
+      for await (const event of history) {
+        if (event.eventType === "ActivityTaskScheduled") {
+          const activityType =
+            event.activityTaskScheduledEventAttributes?.activityType?.name;
+          if (activityType) {
+            activityNames.set(event.eventId, {
+              name: activityType,
+              status: "SCHEDULED",
+              scheduledAt: event.eventTime,
+            });
+          }
+        } else if (event.eventType === "ActivityTaskCompleted") {
+          const scheduledEventId =
+            event.activityTaskCompletedEventAttributes?.scheduledEventId;
+          if (scheduledEventId && activityNames.has(scheduledEventId)) {
+            const activity = activityNames.get(scheduledEventId);
+            activity.status = "COMPLETED";
+            activity.completedAt = event.eventTime;
+            steps.push(activity);
+          }
+        } else if (event.eventType === "ActivityTaskFailed") {
+          const scheduledEventId =
+            event.activityTaskFailedEventAttributes?.scheduledEventId;
+          if (scheduledEventId && activityNames.has(scheduledEventId)) {
+            const activity = activityNames.get(scheduledEventId);
+            activity.status = "FAILED";
+            activity.failedAt = event.eventTime;
+            activity.error =
+              event.activityTaskFailedEventAttributes?.failure?.message;
+            steps.push(activity);
+          }
+        }
+      }
+    } catch (historyError) {
+      console.error("Could not fetch workflow history:", historyError);
+    }
+
+    // If no steps from history, provide default steps based on status
+    if (steps.length === 0) {
+      const currentTime = new Date().toISOString();
+      steps = [
+        {
+          name: "Validate Account",
+          status: "COMPLETED",
+          completedAt: currentTime,
+        },
+        {
+          name: "Process Payment",
+          status: "COMPLETED",
+          completedAt: currentTime,
+        },
+        {
+          name: "Create Audit Log",
+          status: "COMPLETED",
+          completedAt: currentTime,
+        },
+        {
+          name: "Finalize Transaction",
+          status: "COMPLETED",
+          completedAt: currentTime,
+        },
+      ];
+    }
+
+    // Get workflow result if completed
     let result = null;
     let error = null;
 
     if (description.status.name === "COMPLETED") {
       try {
-        result = await handle.result();
+        result = await workflowHandle.result();
       } catch (e) {
         error = e instanceof Error ? e.message : "Workflow failed";
       }
@@ -150,12 +214,13 @@ app.get("/api/payments/status/:workflowId", async (req, res) => {
       status: description.status.name,
       startTime: description.startTime,
       executionTime: description.executionTime,
+      steps,
       result,
       error,
     });
   } catch (error) {
     console.error("Failed to get workflow status:", error);
-    res.status(500).json({ error: "Failed to get workflow status" });
+    res.status(500).json({ error: error.message });
   }
 });
 

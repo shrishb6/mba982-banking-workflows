@@ -2,7 +2,7 @@
 import axios from "axios";
 
 // MockAPI base URL - replace with your actual URL
-const MOCKAPI_BASE_URL = "https://68358740cd78db2058c203cf.mockapi.io/api/v1";
+const MOCKAPI_BASE_URL = "https://68358740cd78db2058c203ce.mockapi.io";
 
 // Types for our banking operations
 export interface Account {
