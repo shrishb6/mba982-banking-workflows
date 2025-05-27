@@ -1,7 +1,7 @@
 # Temporal Payment Workflow Prototype
 
 **MBA982 Research Project - IIT Kanpur**  
-**Student:** [Your Name]  
+**Student:** Shrish Bajpai
 **Topic:** Orchestration-led Banking Workflow Modernization
 
 ## Project Overview
