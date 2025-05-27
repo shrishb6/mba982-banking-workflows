@@ -11,6 +11,10 @@
     "test:modern-v1": "tsx src/test-modern-v1.ts"
   },
   "dependencies": {
+    "@temporalio/client": "^1.11.8",
+    "axios": "^1.9.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
     "tsx": "^4.19.4"
   }
 }
