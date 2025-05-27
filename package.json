@@ -3,14 +3,18 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.ts",
-  "type" : "module",
+  "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "node-fetch": "^3.3.1"
+    "@temporalio/client": "^1.11.8",
+    "@temporalio/worker": "^1.11.8",
+    "node-fetch": "^3.3.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
