@@ -1,31 +1,12 @@
 {
-  "name": "temporal-typescript-hello",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.ts",
-  "type": "module",
   "scripts": {
     "build": "tsc",
     "worker": "tsx src/worker.ts",
     "client": "tsx src/client.ts",
+    "server": "tsx index.ts",
     "dev:worker": "tsx watch src/worker.ts",
-    "dev:client": "tsx watch src/client.ts"
-  },
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@temporalio/client": "^1.11.8",
-    "@temporalio/worker": "^1.11.8",
-    "@temporalio/workflow": "^1.11.8",
-    "@temporalio/activity": "^1.11.8",
-    "cors": "^2.8.5",
-    "express": "^5.1.0",
-    "node-fetch": "^3.3.1",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
-  },
-  "devDependencies": {
-    "@types/node": "^20.10.0",
-    "tsx": "^4.7.1"
+    "dev:client": "tsx watch src/client.ts",
+    "dev:server": "tsx watch index.ts",
+    "test:modern-v1": "tsx src/test-modern-v1.ts"
   }
 }

@@ -1,5 +1,6 @@
+// src/worker.ts
 import { Worker, NativeConnection } from "@temporalio/worker";
-import * as activities from "./activities/hello-activities";
+import * as bankingActivities from "./activities/banking-activities";
 
 async function run() {
   try {
@@ -8,8 +9,7 @@ async function run() {
     console.log("TEMPORAL_NAMESPACE:", process.env.TEMPORAL_NAMESPACE);
     console.log("TEMPORAL_API_KEY exists:", !!process.env.TEMPORAL_API_KEY);
 
-    console.log("Starting Temporal Worker...");
-    // ... rest of your code
+    console.log("Starting Temporal Banking Worker...");
 
     // Create connection to Temporal Cloud
     const connection = await NativeConnection.connect({
@@ -27,11 +27,12 @@ async function run() {
       connection,
       namespace: process.env.TEMPORAL_NAMESPACE!,
       workflowsPath: new URL("./workflows", import.meta.url).pathname,
-      activities,
-      taskQueue: "hello-world-queue",
+      activities: bankingActivities, // Now using banking activities instead of hello activities
+      taskQueue: "payment-processing", // More descriptive task queue name
     });
 
-    console.log("Worker created successfully");
+    console.log("Banking Worker created successfully");
+    console.log("Available activities:", Object.keys(bankingActivities));
     await worker.run();
   } catch (error) {
     console.error("Worker failed:", error);
