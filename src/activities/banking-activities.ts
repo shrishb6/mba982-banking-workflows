@@ -170,7 +170,7 @@ export async function debitAccount(
   console.log(`Activity: Debiting ${amount} from account ${accountNumber}`);
 
   try {
-    // Get the account
+    // Get all accounts
     const response = await axios.get<Account[]>(`${MOCKAPI_BASE_URL}/accounts`);
     const accounts = response.data;
 
@@ -179,14 +179,20 @@ export async function debitAccount(
       throw new Error(`Account ${accountNumber} not found for debit`);
     }
 
+    if (!account.id) {
+      throw new Error(`Account ${accountNumber} missing ID field - cannot update`);
+    }
+
     // Calculate new balance
     const newBalance = account.balance - amount;
 
-    // Update the account balance (in real system, this would be atomic)
+    // Update the account balance using PUT with ID
     await axios.put(`${MOCKAPI_BASE_URL}/accounts/${account.id}`, {
       ...account,
       balance: newBalance,
     });
+
+    console.log(`Successfully updated account ${accountNumber} balance from ${account.balance} to ${newBalance}`);
 
     return {
       success: true,
@@ -199,6 +205,48 @@ export async function debitAccount(
   }
 }
 
+// Activity: Credit the destination account 
+export async function creditAccount(
+  accountNumber: string,
+  amount: number,
+): Promise<{ success: boolean; newBalance: number; transactionId: string }> {
+  console.log(`Activity: Crediting ${amount} to account ${accountNumber}`);
+
+  try {
+    // Get all accounts
+    const response = await axios.get<Account[]>(`${MOCKAPI_BASE_URL}/accounts`);
+    const accounts = response.data;
+
+    const account = accounts.find((acc) => acc.accountNumber === accountNumber);
+    if (!account) {
+      throw new Error(`Account ${accountNumber} not found for credit`);
+    }
+
+    if (!account.id) {
+      throw new Error(`Account ${accountNumber} missing ID field - cannot update`);
+    }
+
+    // Calculate new balance (ADD the amount)
+    const newBalance = account.balance + amount;
+
+    // Update the account balance using PUT with ID
+    await axios.put(`${MOCKAPI_BASE_URL}/accounts/${account.id}`, {
+      ...account,
+      balance: newBalance,
+    });
+
+    console.log(`Successfully credited account ${accountNumber} balance from ${account.balance} to ${newBalance}`);
+
+    return {
+      success: true,
+      newBalance,
+      transactionId: `TXN_${Date.now()}`,
+    };
+  } catch (error) {
+    console.error("Account credit failed:", error);
+    throw new Error(`Account credit failed: ${error}`);
+  }
+}
 // Activity: Initiate settlement to external network
 export async function initiateSettlement(
   paymentId: string,

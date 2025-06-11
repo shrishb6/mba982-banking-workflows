@@ -1,21 +1,20 @@
 // src/workflows/modern-payment-v1.ts
-// Modern v1: Temporal orchestrated workflow (no fraud check)
+// Modern v1: Simplified Temporal orchestrated workflow (no settlement complexity)
 import { proxyActivities } from '@temporalio/workflow';
 import type * as activities from '../activities/banking-activities';
 
-// Create proxy for activities with timeout and retry policies
 const {
   validateAccount,
   debitAccount,
-  initiateSettlement,
+  creditAccount,
   createPaymentRequest,
   updatePaymentStatus,
   logAuditEvent
 } = proxyActivities<typeof activities>({
-  startToCloseTimeout: '2 minutes',
+  startToCloseTimeout: '1 minute', // Shorter timeout since no external networks
   retry: {
     initialInterval: '1s',
-    maximumInterval: '30s',
+    maximumInterval: '10s',
     backoffCoefficient: 2,
     maximumAttempts: 3,
   },
@@ -32,7 +31,6 @@ export interface PaymentInput {
 export interface PaymentResult {
   success: boolean;
   paymentId?: string;
-  settlementId?: string;
   error?: string;
   executionSummary: {
     totalTime: number;
@@ -42,14 +40,14 @@ export interface PaymentResult {
   };
 }
 
-// Modern v1 Workflow: Temporal orchestrated, modular, observable (no fraud check)
+// Modern v1 Workflow: Clean, focused payment processing (no fraud check)
 export async function modernPaymentV1Workflow(input: PaymentInput): Promise<PaymentResult> {
   const startTime = Date.now();
   const workflowId = `modern-v1-${Date.now()}`;
   const stepsExecuted: string[] = [];
 
   try {
-    // Step 1: Create payment request with structured logging
+    // Step 1: Create payment request
     stepsExecuted.push('CREATE_PAYMENT_REQUEST');
     await logAuditEvent(
       workflowId, 
@@ -57,7 +55,7 @@ export async function modernPaymentV1Workflow(input: PaymentInput): Promise<Paym
       'CREATE_PAYMENT_REQUEST', 
       'PENDING', 
       0, 
-      `Starting modern orchestrated payment v1 - From: ${input.fromAccount}, To: ${input.toAccount}, Amount: ${input.amount} ${input.currency}`
+      `Starting payment: ${input.fromAccount} → ${input.toAccount} | Amount: ${input.amount} ${input.currency}`
     );
 
     const { paymentId } = await createPaymentRequest(
@@ -66,21 +64,24 @@ export async function modernPaymentV1Workflow(input: PaymentInput): Promise<Paym
       input.amount,
       input.currency,
       workflowId,
-      `${input.description} (Modern Orchestrated v1)`
+      `${input.description} (Orchestrated v1)`
     );
 
-    await logAuditEvent(workflowId, 'v1', 'CREATE_PAYMENT_REQUEST', 'SUCCESS', Date.now() - startTime, `Payment request created: ${paymentId} | Temporal provides automatic retries and durability`);
+    await logAuditEvent(workflowId, 'v1', 'CREATE_PAYMENT_REQUEST', 'SUCCESS', Date.now() - startTime, 
+      `Payment request created: ${paymentId} | Temporal ensures durable execution`);
 
-    // Step 2: Validate source account (with automatic retry via Temporal)
+    // Step 2: Validate source account
     stepsExecuted.push('VALIDATE_ACCOUNT');
-    await logAuditEvent(workflowId, 'v1', 'VALIDATE_ACCOUNT', 'PENDING', 0, `Validating account ${input.fromAccount} with Temporal retry policies`);
+    await logAuditEvent(workflowId, 'v1', 'VALIDATE_ACCOUNT', 'PENDING', 0, 
+      `Validating account ${input.fromAccount} balance and status`);
 
     const stepStart = Date.now();
     const validation = await validateAccount(input.fromAccount, input.amount);
     const stepTime = Date.now() - stepStart;
 
     if (!validation.isValid) {
-      await logAuditEvent(workflowId, 'v1', 'VALIDATE_ACCOUNT', 'FAILED', stepTime, `Validation failed: ${validation.reason} | Temporal automatically logged failure`);
+      await logAuditEvent(workflowId, 'v1', 'VALIDATE_ACCOUNT', 'FAILED', stepTime, 
+        `Validation failed: ${validation.reason} | Temporal automatically handles failure`);
       await updatePaymentStatus(paymentId, 'FAILED', validation.reason);
 
       return {
@@ -96,18 +97,21 @@ export async function modernPaymentV1Workflow(input: PaymentInput): Promise<Paym
       };
     }
 
-    await logAuditEvent(workflowId, 'v1', 'VALIDATE_ACCOUNT', 'SUCCESS', stepTime, `Account validated: ${validation.account!.accountNumber} | Balance: ${validation.account!.balance} | Temporal ensures step-level observability`);
+    await logAuditEvent(workflowId, 'v1', 'VALIDATE_ACCOUNT', 'SUCCESS', stepTime, 
+      `Account validated | Balance: ${validation.account!.balance} | Temporal provides step-level observability`);
 
-    // Step 3: Debit source account (fault-tolerant via Temporal)
+    // Step 3: Debit source account
     stepsExecuted.push('DEBIT_ACCOUNT');
-    await logAuditEvent(workflowId, 'v1', 'DEBIT_ACCOUNT', 'PENDING', 0, `Debiting ${input.amount} from ${input.fromAccount} | Temporal handles transactional integrity`);
+    await logAuditEvent(workflowId, 'v1', 'DEBIT_ACCOUNT', 'PENDING', 0, 
+      `Debiting ${input.amount} from ${input.fromAccount}`);
 
     const debitStart = Date.now();
     const debitResult = await debitAccount(input.fromAccount, input.amount);
     const debitTime = Date.now() - debitStart;
 
     if (!debitResult.success) {
-      await logAuditEvent(workflowId, 'v1', 'DEBIT_ACCOUNT', 'FAILED', debitTime, `Account debit failed | Temporal workflow can implement compensation logic`);
+      await logAuditEvent(workflowId, 'v1', 'DEBIT_ACCOUNT', 'FAILED', debitTime, 
+        `Debit failed: ${debitResult.error} | Temporal can implement compensation logic`);
       await updatePaymentStatus(paymentId, 'FAILED', 'Debit failed');
 
       return {
@@ -123,36 +127,57 @@ export async function modernPaymentV1Workflow(input: PaymentInput): Promise<Paym
       };
     }
 
-    await logAuditEvent(workflowId, 'v1', 'DEBIT_ACCOUNT', 'SUCCESS', debitTime, `Account debited successfully | New balance: ${debitResult.newBalance} | Transaction ID: ${debitResult.transactionId} | Temporal provides full audit trail`);
+    await logAuditEvent(workflowId, 'v1', 'DEBIT_ACCOUNT', 'SUCCESS', debitTime, 
+      `Account debited | New balance: ${debitResult.newBalance} | Transaction: ${debitResult.transactionId}`);
 
-    // Step 4: Initiate settlement (with network resilience)
-    stepsExecuted.push('INITIATE_SETTLEMENT');
-    await logAuditEvent(workflowId, 'v1', 'INITIATE_SETTLEMENT', 'PENDING', 0, `Initiating settlement for payment ${paymentId} | Temporal manages external service calls`);
+    // Step 4: Credit destination account
+    stepsExecuted.push('CREDIT_ACCOUNT');
+    await logAuditEvent(workflowId, 'v1', 'CREDIT_ACCOUNT', 'PENDING', 0, 
+      `Crediting ${input.amount} to ${input.toAccount}`);
 
-    const settlementStart = Date.now();
-    const settlement = await initiateSettlement(paymentId, input.amount, input.currency);
-    const settlementTime = Date.now() - settlementStart;
+    const creditStart = Date.now();
+    const creditResult = await creditAccount(input.toAccount, input.amount);
+    const creditTime = Date.now() - creditStart;
 
-    await logAuditEvent(workflowId, 'v1', 'INITIATE_SETTLEMENT', 'SUCCESS', settlementTime, `Settlement initiated successfully | Network: ${settlement.networkReference} | Temporal ensures reliable external integration`);
+    if (!creditResult.success) {
+      await logAuditEvent(workflowId, 'v1', 'CREDIT_ACCOUNT', 'FAILED', creditTime, 
+        `Credit failed: ${creditResult.error} | Temporal enables SAGA compensation patterns`);
 
-    // Step 5: Update payment status to completed
-    await updatePaymentStatus(paymentId, 'COMPLETED', `Settlement: ${settlement.networkReference} - Processed via Temporal orchestration`);
+      // In a real system, would trigger debit reversal here
+      await updatePaymentStatus(paymentId, 'FAILED', 'Credit failed - compensation required');
 
-    // Final audit log with orchestration benefits
+      return {
+        success: false,
+        paymentId,
+        error: 'Account credit failed',
+        executionSummary: {
+          totalTime: Date.now() - startTime,
+          stepsExecuted,
+          version: 'Modern v1',
+          architecture: 'Temporal Orchestrated'
+        }
+      };
+    }
+
+    await logAuditEvent(workflowId, 'v1', 'CREDIT_ACCOUNT', 'SUCCESS', creditTime, 
+      `Account credited | New balance: ${creditResult.newBalance} | Transaction: ${creditResult.transactionId}`);
+
+    // Step 5: Complete payment
+    await updatePaymentStatus(paymentId, 'COMPLETED', 'Payment processed successfully via Temporal orchestration');
+
     const totalTime = Date.now() - startTime;
     await logAuditEvent(
       workflowId, 
       'v1', 
-      'WORKFLOW_COMPLETED', 
+      'PAYMENT_COMPLETED', 
       'SUCCESS', 
       totalTime, 
-      `Modern orchestrated payment completed successfully | Benefits: Automatic retries, step-level observability, fault tolerance, durable execution | Total execution time: ${totalTime}ms`
+      `Payment completed successfully | Benefits: Automatic retries, step-level observability, fault tolerance | Duration: ${totalTime}ms`
     );
 
     return {
       success: true,
       paymentId,
-      settlementId: settlement.settlementId,
       executionSummary: {
         totalTime,
         stepsExecuted,
@@ -168,10 +193,10 @@ export async function modernPaymentV1Workflow(input: PaymentInput): Promise<Paym
     await logAuditEvent(
       workflowId, 
       'v1', 
-      'WORKFLOW_FAILED', 
+      'PAYMENT_FAILED', 
       'FAILED', 
       totalTime, 
-      `Modern orchestrated workflow failed: ${errorMessage} | Temporal provides detailed error context and recovery options`
+      `Payment workflow failed: ${errorMessage} | Temporal provides detailed error context`
     );
 
     return {
