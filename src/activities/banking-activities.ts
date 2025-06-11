@@ -39,17 +39,6 @@ export interface PaymentRequest {
   createdAt?: string;
 }
 
-export interface SettlementResult {
-  id?: string;
-  paymentId: string;
-  amount: number;
-  currency: string;
-  status: string;
-  settlementNetwork: string;
-  networkReference: string;
-  processedAt?: string;
-}
-
 export interface AuditLog {
   id?: string;
   workflowId: string;
@@ -247,55 +236,8 @@ export async function creditAccount(
     throw new Error(`Account credit failed: ${error}`);
   }
 }
-// Activity: Initiate settlement to external network
-export async function initiateSettlement(
-  paymentId: string,
-  amount: number,
-  currency: string,
-): Promise<{ settlementId: string; status: string; networkReference: string }> {
-  console.log(
-    `Activity: Initiating settlement for payment ${paymentId}, amount ${amount} ${currency}`,
-  );
-
-  try {
-    // Determine settlement network based on amount and currency
-    let settlementNetwork = "ACH";
-    if (amount > 10000) {
-      settlementNetwork = "WIRE";
-    }
-    if (currency !== "USD") {
-      settlementNetwork = "SWIFT";
-    }
-
-    // Create settlement record
-    const settlementData: Omit<SettlementResult, "id"> = {
-      paymentId,
-      amount,
-      currency,
-      status: "PROCESSING",
-      settlementNetwork,
-      networkReference: `${settlementNetwork}_${Date.now()}`,
-    };
-
-    const response = await axios.post<SettlementResult>(
-      `${MOCKAPI_BASE_URL}/outbound_settlements`,
-      settlementData,
-    );
-    const settlement = response.data;
-
-    return {
-      settlementId: settlement.id!,
-      status: settlement.status,
-      networkReference: settlement.networkReference,
-    };
-  } catch (error) {
-    console.error("Settlement initiation failed:", error);
-    throw new Error(`Settlement initiation failed: ${error}`);
-  }
-}
 
 // Activity: Log audit event for compliance
-// Replace your current logAuditEvent function with this:
 
 export async function logAuditEvent(
   workflowId: string,
