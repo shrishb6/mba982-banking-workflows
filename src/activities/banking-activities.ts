@@ -295,45 +295,53 @@ export async function initiateSettlement(
 }
 
 // Activity: Log audit event for compliance
+// Replace your current logAuditEvent function with this:
+
 export async function logAuditEvent(
   workflowId: string,
-  workflowVersion: string,
-  step: string,
-  status: "SUCCESS" | "FAILED" | "PENDING",
-  executionTime: number,
+  version: string,        // ← Changed from workflowVersion to version
+  stepName: string,       // ← Changed from step to stepName  
+  status: string,         // ← Made more flexible (was strict union)
+  duration: number,       // ← Changed from executionTime to duration
   details: string,
 ): Promise<{ auditId: string }> {
   console.log(
-    `Activity: Logging audit event - ${workflowId}:${step}:${status}`,
+    `📋 AUDIT: ${workflowId} | ${stepName} | ${status} | ${details}`,
   );
 
   try {
-    const auditData: Omit<AuditLog, "id"> = {
+    const auditData = {
       workflowId,
-      workflowVersion,
-      step,
+      workflowVersion: version,  // ← Map version to workflowVersion for MockAPI
+      step: stepName,            // ← Map stepName to step for MockAPI
       status,
-      executionTime,
+      executionTime: duration,   // ← Map duration to executionTime for MockAPI
       details,
+      timestamp: new Date().toISOString(),
       actor: "TEMPORAL_WORKER",
     };
+
+    console.log('📝 Sending audit data:', auditData);
 
     const response = await axios.post<AuditLog>(
       `${MOCKAPI_BASE_URL}/audit_logs`,
       auditData,
     );
-    const auditLog = response.data;
+
+    console.log('✅ Audit logged successfully:', response.data.id);
 
     return {
-      auditId: auditLog.id!,
+      auditId: response.data.id!,
     };
   } catch (error) {
-    console.error("Audit logging failed:", error);
-    // Don't throw - audit failures shouldn't break the payment
-    return { auditId: "AUDIT_FAILED" };
+    console.error("💥 Audit logging failed:", error);
+
+    // ✅ CRITICAL: Return success even on failure to prevent Temporal errors
+    return { 
+      auditId: "AUDIT_FAILED" 
+    };
   }
 }
-
 // Activity: Create payment request record
 export async function createPaymentRequest(
   fromAccount: string,
