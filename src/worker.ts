@@ -26,12 +26,15 @@ async function run() {
     const worker = await Worker.create({
       connection,
       namespace: process.env.TEMPORAL_NAMESPACE!,
-      workflowsPath: new URL("./workflows", import.meta.url).pathname,
-      activities: bankingActivities, // Now using banking activities instead of hello activities
-      taskQueue: "payment-processing", // More descriptive task queue name
+      workflowsPath: require.resolve("./workflows"),
+      activities: bankingActivities,
+      taskQueue: "payment-processing",
     });
 
     console.log("Banking Worker created successfully");
+    console.log(
+      "Available workflows: modernPaymentV1Workflow, modernPaymentV2Workflow",
+    );
     console.log("Available activities:", Object.keys(bankingActivities));
     await worker.run();
   } catch (error) {

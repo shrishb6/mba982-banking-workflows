@@ -1,12 +1,11 @@
 // src/workflows/modern-payment-v2.ts
-// Modern v2: Temporal orchestrated workflow WITH fraud check (PM-configured)
+// Modern v2: Payment workflow WITH fraud check
 import { proxyActivities } from "@temporalio/workflow";
 import type * as activities from "../activities/banking-activities";
 
-// Create proxy for activities with timeout and retry policies
 const {
   validateAccount,
-  performFraudCheck, // ✅ NEW: Fraud check activity
+  performFraudCheck, // ← Add fraud check activity
   debitAccount,
   creditAccount,
   createPaymentRequest,
@@ -39,22 +38,16 @@ export interface PaymentResult {
     stepsExecuted: string[];
     version: string;
     architecture: string;
-    fraudCheckResult?: {
-      performed: boolean;
-      riskScore: number;
-      action: string;
-    };
   };
 }
 
-// Modern v2 Workflow: With fraud check step added by Product Manager
+// Modern v2 Workflow: WITH fraud check step
 export async function modernPaymentV2Workflow(
   input: PaymentInput,
 ): Promise<PaymentResult> {
   const startTime = Date.now();
   const workflowId = `modern-v2-${Date.now()}`;
   const stepsExecuted: string[] = [];
-  let fraudCheckResult = { performed: false, riskScore: 0, action: "none" };
 
   try {
     // Step 1: Create payment request
@@ -65,7 +58,7 @@ export async function modernPaymentV2Workflow(
       "CREATE_PAYMENT_REQUEST",
       "PENDING",
       0,
-      `Starting modern payment v2 with fraud check - From: ${input.fromAccount}, To: ${input.toAccount}, Amount: ${input.amount} ${input.currency}`,
+      `Starting v2 payment with fraud check: ${input.fromAccount} → ${input.toAccount} | Amount: ${input.amount}`,
     );
 
     const { paymentId } = await createPaymentRequest(
@@ -74,7 +67,7 @@ export async function modernPaymentV2Workflow(
       input.amount,
       input.currency,
       workflowId,
-      `${input.description} (Modern v2 - PM Configured with Fraud Check)`,
+      `${input.description} (v2 - With Fraud Check)`,
     );
 
     await logAuditEvent(
@@ -83,7 +76,7 @@ export async function modernPaymentV2Workflow(
       "CREATE_PAYMENT_REQUEST",
       "SUCCESS",
       Date.now() - startTime,
-      `Payment request created: ${paymentId} | v2 workflow with PM-configured fraud check`,
+      `Payment request created: ${paymentId} | v2 workflow with fraud protection`,
     );
 
     // Step 2: Validate source account
@@ -94,24 +87,20 @@ export async function modernPaymentV2Workflow(
       "VALIDATE_ACCOUNT",
       "PENDING",
       0,
-      `Validating account ${input.fromAccount} balance and status`,
+      `Validating account ${input.fromAccount}`,
     );
 
-    const stepStart = Date.now();
     const validation = await validateAccount(input.fromAccount, input.amount);
-    const stepTime = Date.now() - stepStart;
-
     if (!validation.isValid) {
       await logAuditEvent(
         workflowId,
         "v2",
         "VALIDATE_ACCOUNT",
         "FAILED",
-        stepTime,
-        `Validation failed: ${validation.reason} | v2 workflow terminated`,
+        0,
+        `Validation failed: ${validation.reason}`,
       );
       await updatePaymentStatus(paymentId, "FAILED", validation.reason);
-
       return {
         success: false,
         paymentId,
@@ -120,7 +109,7 @@ export async function modernPaymentV2Workflow(
           totalTime: Date.now() - startTime,
           stepsExecuted,
           version: "Modern v2",
-          architecture: "Temporal Orchestrated + PM Configured",
+          architecture: "Temporal Orchestrated + Fraud Check",
         },
       };
     }
@@ -130,11 +119,11 @@ export async function modernPaymentV2Workflow(
       "v2",
       "VALIDATE_ACCOUNT",
       "SUCCESS",
-      stepTime,
-      `Account validated | Balance: ${validation.account!.balance} | Proceeding to fraud check`,
+      0,
+      `Account validated | Balance: ${validation.account!.balance}`,
     );
 
-    // Step 3: 🚨 FRAUD CHECK (NEW STEP - Added by Product Manager via UI)
+    // Step 3: 🚨 FRAUD CHECK (NEW STEP - This is what makes it v2!)
     stepsExecuted.push("FRAUD_CHECK");
     await logAuditEvent(
       workflowId,
@@ -142,37 +131,27 @@ export async function modernPaymentV2Workflow(
       "FRAUD_CHECK",
       "PENDING",
       0,
-      `⚡ PM-CONFIGURED STEP: Performing fraud check | Amount: ${input.amount} | Threshold: $1000`,
+      `⚡ FRAUD CHECK: Screening payment for amount ${input.amount}`,
     );
 
-    const fraudStart = Date.now();
     const fraudResult = await performFraudCheck(
       input.fromAccount,
       input.amount,
     );
-    const fraudTime = Date.now() - fraudStart;
-
-    fraudCheckResult = {
-      performed: true,
-      riskScore: fraudResult.riskScore,
-      action: fraudResult.isBlocked ? "blocked" : "approved",
-    };
-
     if (fraudResult.isBlocked) {
       await logAuditEvent(
         workflowId,
         "v2",
         "FRAUD_CHECK",
         "BLOCKED",
-        fraudTime,
-        `🚨 FRAUD DETECTED: ${fraudResult.reason} | Risk Score: ${fraudResult.riskScore} | Payment blocked by PM-configured rule`,
+        0,
+        `🚨 FRAUD DETECTED: ${fraudResult.reason} | Risk Score: ${fraudResult.riskScore}`,
       );
       await updatePaymentStatus(
         paymentId,
         "BLOCKED_FRAUD",
         `Fraud detected: ${fraudResult.reason}`,
       );
-
       return {
         success: false,
         paymentId,
@@ -181,8 +160,7 @@ export async function modernPaymentV2Workflow(
           totalTime: Date.now() - startTime,
           stepsExecuted,
           version: "Modern v2",
-          architecture: "Temporal Orchestrated + PM Configured",
-          fraudCheckResult,
+          architecture: "Temporal Orchestrated + Fraud Check",
         },
       };
     }
@@ -192,8 +170,8 @@ export async function modernPaymentV2Workflow(
       "v2",
       "FRAUD_CHECK",
       "SUCCESS",
-      fraudTime,
-      `✅ Fraud check passed | Risk Score: ${fraudResult.riskScore} | ${fraudResult.reason} | PM-configured security validated`,
+      0,
+      `✅ Fraud check passed | Risk Score: ${fraudResult.riskScore} | ${fraudResult.reason}`,
     );
 
     // Step 4: Debit source account (after fraud clearance)
@@ -204,24 +182,20 @@ export async function modernPaymentV2Workflow(
       "DEBIT_ACCOUNT",
       "PENDING",
       0,
-      `Debiting ${input.amount} from ${input.fromAccount} | Post-fraud-check processing`,
+      `Debiting ${input.amount} (post-fraud-check)`,
     );
 
-    const debitStart = Date.now();
     const debitResult = await debitAccount(input.fromAccount, input.amount);
-    const debitTime = Date.now() - debitStart;
-
     if (!debitResult.success) {
       await logAuditEvent(
         workflowId,
         "v2",
         "DEBIT_ACCOUNT",
         "FAILED",
-        debitTime,
-        `Debit failed: ${debitResult.error} | v2 workflow error after fraud clearance`,
+        0,
+        `Debit failed: ${debitResult.error}`,
       );
       await updatePaymentStatus(paymentId, "FAILED", "Debit failed");
-
       return {
         success: false,
         paymentId,
@@ -230,8 +204,7 @@ export async function modernPaymentV2Workflow(
           totalTime: Date.now() - startTime,
           stepsExecuted,
           version: "Modern v2",
-          architecture: "Temporal Orchestrated + PM Configured",
-          fraudCheckResult,
+          architecture: "Temporal Orchestrated + Fraud Check",
         },
       };
     }
@@ -241,8 +214,8 @@ export async function modernPaymentV2Workflow(
       "v2",
       "DEBIT_ACCOUNT",
       "SUCCESS",
-      debitTime,
-      `Account debited | New balance: ${debitResult.newBalance} | Transaction: ${debitResult.transactionId} | Fraud-cleared payment`,
+      0,
+      `Account debited | New balance: ${debitResult.newBalance} | Fraud-cleared payment`,
     );
 
     // Step 5: Credit destination account
@@ -253,29 +226,20 @@ export async function modernPaymentV2Workflow(
       "CREDIT_ACCOUNT",
       "PENDING",
       0,
-      `Crediting ${input.amount} to ${input.toAccount} | Secure payment completion`,
+      `Crediting ${input.amount} (secure transfer)`,
     );
 
-    const creditStart = Date.now();
     const creditResult = await creditAccount(input.toAccount, input.amount);
-    const creditTime = Date.now() - creditStart;
-
     if (!creditResult.success) {
       await logAuditEvent(
         workflowId,
         "v2",
         "CREDIT_ACCOUNT",
         "FAILED",
-        creditTime,
-        `Credit failed: ${creditResult.error} | v2 workflow compensation needed`,
+        0,
+        `Credit failed: ${creditResult.error}`,
       );
-
-      await updatePaymentStatus(
-        paymentId,
-        "FAILED",
-        "Credit failed - compensation required",
-      );
-
+      await updatePaymentStatus(paymentId, "FAILED", "Credit failed");
       return {
         success: false,
         paymentId,
@@ -284,8 +248,7 @@ export async function modernPaymentV2Workflow(
           totalTime: Date.now() - startTime,
           stepsExecuted,
           version: "Modern v2",
-          architecture: "Temporal Orchestrated + PM Configured",
-          fraudCheckResult,
+          architecture: "Temporal Orchestrated + Fraud Check",
         },
       };
     }
@@ -295,15 +258,15 @@ export async function modernPaymentV2Workflow(
       "v2",
       "CREDIT_ACCOUNT",
       "SUCCESS",
-      creditTime,
-      `Account credited | New balance: ${creditResult.newBalance} | Transaction: ${creditResult.transactionId} | Fraud-secured transfer`,
+      0,
+      `Account credited | New balance: ${creditResult.newBalance} | Fraud-secured transfer`,
     );
 
     // Step 6: Complete payment
     await updatePaymentStatus(
       paymentId,
       "COMPLETED",
-      "Payment processed successfully via v2 workflow with fraud protection",
+      "v2 payment completed with fraud protection",
     );
 
     const totalTime = Date.now() - startTime;
@@ -313,7 +276,7 @@ export async function modernPaymentV2Workflow(
       "PAYMENT_COMPLETED",
       "SUCCESS",
       totalTime,
-      `🎉 v2 Payment completed with fraud protection | Risk Score: ${fraudResult.riskScore} | PM Configuration Success | Duration: ${totalTime}ms`,
+      `🎉 v2 Payment completed with fraud protection | Duration: ${totalTime}ms`,
     );
 
     return {
@@ -323,24 +286,21 @@ export async function modernPaymentV2Workflow(
         totalTime,
         stepsExecuted,
         version: "Modern v2",
-        architecture: "Temporal Orchestrated + PM Configured",
-        fraudCheckResult,
+        architecture: "Temporal Orchestrated + Fraud Check",
       },
     };
   } catch (error) {
     const totalTime = Date.now() - startTime;
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
-
     await logAuditEvent(
       workflowId,
       "v2",
       "PAYMENT_FAILED",
       "FAILED",
       totalTime,
-      `v2 Payment workflow failed: ${errorMessage} | Fraud check status: ${fraudCheckResult.performed ? "completed" : "not reached"}`,
+      `v2 Payment workflow failed: ${errorMessage}`,
     );
-
     return {
       success: false,
       error: errorMessage,
@@ -348,8 +308,7 @@ export async function modernPaymentV2Workflow(
         totalTime,
         stepsExecuted,
         version: "Modern v2",
-        architecture: "Temporal Orchestrated + PM Configured",
-        fraudCheckResult,
+        architecture: "Temporal Orchestrated + Fraud Check",
       },
     };
   }

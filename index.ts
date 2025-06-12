@@ -2,9 +2,6 @@
 import express from "express";
 import cors from "cors";
 import { Client, Connection } from "@temporalio/client";
-import { modernPaymentV1Workflow } from "./src/workflows/modern-payment-v1";
-import axios from "axios";
-import { modernPaymentV2Workflow } from "./src/workflows/modern-payment-v2";
 
 // MockAPI base URL
 const MOCKAPI_BASE_URL = "https://68358740cd78db2058c203ce.mockapi.io";
@@ -61,27 +58,33 @@ app.get("/api/health", (req, res) => {
 // 2. Get all accounts (for dropdowns in Appsmith)
 app.get("/api/accounts", async (req, res) => {
   try {
+    console.log("🔍 Fetching accounts from MockAPI...");
     const response = await axios.get(`${MOCKAPI_BASE_URL}/accounts`);
+    console.log("✅ MockAPI response received:", response.data.length, "accounts");
 
-    const accounts = response.data.map((account: any) => ({
-      id: account.id,
-      accountNumber: account.accountNumber,
-      customerId: account.customerId,
-      balance: account.balance,
-      currency: account.currency,
-      status: account.status,
-      accountType: account.type, // Changed from accountType to type
-      displayName: `${account.accountNumber} (${account.type}) - ${account.currency} ${account.balance}`,
-    }));
+    const accounts = response.data.map((account: any) => {
+      console.log("Processing account:", account.accountNumber, "Type:", account.type);
+      return {
+        id: account.id,
+        accountNumber: account.accountNumber,
+        customerId: account.customerId,
+        balance: account.balance,
+        currency: account.currency,
+        status: account.status,
+        accountType: account.type, // This should work based on your MockAPI data
+        displayName: `${account.accountNumber} (${account.type}) - ${account.currency} ${account.balance}`,
+      };
+    });
 
+    console.log("✅ Processed accounts:", accounts.length);
     res.json(accounts);
   } catch (error) {
-    console.error("Failed to fetch accounts:", error);
+    console.error("❌ Failed to fetch accounts:", error.message);
     res.status(500).json({ error: "Failed to fetch accounts" });
   }
 });
 
-// 3. Start a payment workflow (Customer role)
+// 3. Start a payment workflow - COMPLETE REPLACEMENT
 app.post("/api/payments/start", async (req, res) => {
   try {
     const { fromAccount, toAccount, amount, currency, description } = req.body;
@@ -93,25 +96,63 @@ app.post("/api/payments/start", async (req, res) => {
       });
     }
 
-    // Start workflow
-    const workflowId = `modern-v1-appsmith-${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    // 🎯 DETERMINISTIC ROUTING LOGIC (predictable for demo)
+    // v2 (with fraud check) for amounts >= $1000
+    // v1 (baseline) for amounts < $1000
+    const useV2 = amount >= 1000;
+    const workflowVersion = useV2 ? "v2" : "v1";
 
-    const handle = await temporalClient.workflow.start(
-      modernPaymentV1Workflow,
-      {
-        taskQueue: "payment-processing",
-        workflowId,
-        args: [{ fromAccount, toAccount, amount, currency, description }],
-      },
+    // Select workflow TYPE NAME (string, not import)
+    const workflowType = useV2
+      ? "modernPaymentV2Workflow"
+      : "modernPaymentV1Workflow";
+
+    // Start workflow with appropriate version
+    const workflowId = `modern-${workflowVersion}-${Date.now()}${Math.floor(Math.random() * 1000)}`;
+
+    console.log(
+      `🎯 DETERMINISTIC ROUTING: Amount $${amount} → ${workflowVersion.toUpperCase()} workflow`,
+    );
+    console.log(
+      `💳 Payment: ${fromAccount} → ${toAccount} | Amount: $${amount} | Route: ${useV2 ? "HIGH-VALUE (v2 + fraud)" : "STANDARD (v1 fast)"}`,
     );
 
-    console.log(`✅ Started payment workflow: ${workflowId}`);
+    const handle = await temporalClient.workflow.start(workflowType, {
+      taskQueue: "payment-processing",
+      workflowId,
+      args: [{ fromAccount, toAccount, amount, currency, description }],
+    });
 
+    console.log(
+      `✅ Started ${workflowVersion} payment workflow: ${workflowId}`,
+    );
+
+    // Enhanced response with routing logic explanation
     res.json({
       success: true,
       workflowId: handle.workflowId,
       runId: handle.firstExecutionRunId,
-      message: "Payment workflow started successfully",
+      version: workflowVersion,
+      routing_logic: {
+        threshold: 1000,
+        payment_amount: amount,
+        selected_version: workflowVersion,
+        reason: useV2
+          ? `High-value payment ($${amount} >= $1000) routed to v2 with fraud protection`
+          : `Standard payment ($${amount} < $1000) routed to fast v1 workflow`,
+      },
+      workflow_features: useV2
+        ? [
+            "fraud_check",
+            "enhanced_security",
+            "risk_assessment",
+            "compliance_logging",
+          ]
+        : ["fast_processing", "optimized_path", "baseline_security"],
+      message: `Payment routed to ${workflowVersion} workflow based on amount threshold`,
+      expected_steps: useV2 ? 6 : 5,
+      fraud_protection: useV2 ? "enabled" : "standard",
+      processing_time_estimate: useV2 ? "3.5s" : "3.2s",
     });
   } catch (error) {
     console.error("Failed to start payment workflow:", error);
@@ -277,7 +318,7 @@ app.get("/api/audit-logs", async (req, res) => {
 // 8. Enhanced workflow configuration (replaces the simple one you have)
 app.get("/api/workflows/config", async (req, res) => {
   try {
-    const version = req.query.version || 'v1';
+    const version = req.query.version || "v1";
 
     const workflowConfigs = {
       v1: {
@@ -298,7 +339,7 @@ app.get("/api/workflows/config", async (req, res) => {
             service: "payment",
             required: true,
             configurable: false,
-            activity_name: "createPaymentRequest"
+            activity_name: "createPaymentRequest",
           },
           {
             id: "validate_account",
@@ -308,27 +349,27 @@ app.get("/api/workflows/config", async (req, res) => {
             service: "ledger",
             required: true,
             configurable: false,
-            activity_name: "validateAccount"
+            activity_name: "validateAccount",
           },
           {
-            id: "debit_account", 
+            id: "debit_account",
             name: "Debit Source Account",
             description: "Remove funds from source account",
             order: 3,
             service: "ledger",
             required: true,
             configurable: false,
-            activity_name: "debitAccount"
+            activity_name: "debitAccount",
           },
           {
             id: "credit_account",
             name: "Credit Destination Account",
-            description: "Add funds to destination account", 
+            description: "Add funds to destination account",
             order: 4,
             service: "ledger",
             required: true,
             configurable: false,
-            activity_name: "creditAccount"
+            activity_name: "creditAccount",
           },
           {
             id: "complete_payment",
@@ -338,9 +379,9 @@ app.get("/api/workflows/config", async (req, res) => {
             service: "payment",
             required: true,
             configurable: false,
-            activity_name: "updatePaymentStatus"
-          }
-        ]
+            activity_name: "updatePaymentStatus",
+          },
+        ],
       },
       v2: {
         version: "2.0",
@@ -360,7 +401,7 @@ app.get("/api/workflows/config", async (req, res) => {
             service: "payment",
             required: true,
             configurable: false,
-            activity_name: "createPaymentRequest"
+            activity_name: "createPaymentRequest",
           },
           {
             id: "validate_account",
@@ -370,7 +411,7 @@ app.get("/api/workflows/config", async (req, res) => {
             service: "ledger",
             required: true,
             configurable: false,
-            activity_name: "validateAccount"
+            activity_name: "validateAccount",
           },
           {
             id: "fraud_check",
@@ -386,29 +427,29 @@ app.get("/api/workflows/config", async (req, res) => {
             config: {
               amount_threshold: 1000,
               risk_level: "medium",
-              on_fraud_detected: "block"
+              on_fraud_detected: "block",
             },
-            highlight: true  // For UI highlighting
+            highlight: true, // For UI highlighting
           },
           {
-            id: "debit_account", 
+            id: "debit_account",
             name: "Debit Source Account",
             description: "Remove funds from source account",
             order: 4,
             service: "ledger",
             required: true,
             configurable: false,
-            activity_name: "debitAccount"
+            activity_name: "debitAccount",
           },
           {
             id: "credit_account",
             name: "Credit Destination Account",
-            description: "Add funds to destination account", 
+            description: "Add funds to destination account",
             order: 5,
             service: "ledger",
             required: true,
             configurable: false,
-            activity_name: "creditAccount"
+            activity_name: "creditAccount",
           },
           {
             id: "complete_payment",
@@ -418,18 +459,17 @@ app.get("/api/workflows/config", async (req, res) => {
             service: "payment",
             required: true,
             configurable: false,
-            activity_name: "updatePaymentStatus"
-          }
-        ]
-      }
+            activity_name: "updatePaymentStatus",
+          },
+        ],
+      },
     };
 
     const config = workflowConfigs[version] || workflowConfigs.v1;
     res.json(config);
-
   } catch (error) {
-    console.error('❌ Error fetching workflow config:', error);
-    res.status(500).json({ error: 'Failed to fetch workflow configuration' });
+    console.error("❌ Error fetching workflow config:", error);
+    res.status(500).json({ error: "Failed to fetch workflow configuration" });
   }
 });
 
@@ -440,7 +480,8 @@ app.get("/api/workflows/available-steps", async (req, res) => {
       {
         id: "fraud_check",
         name: "Fraud Check",
-        description: "Screen payments for fraud risk indicators using ML models",
+        description:
+          "Screen payments for fraud risk indicators using ML models",
         service: "fraud",
         category: "Security & Risk",
         insert_after: "validate_account",
@@ -456,7 +497,7 @@ app.get("/api/workflows/available-steps", async (req, res) => {
             default: 1000,
             min: 100,
             max: 50000,
-            required: true
+            required: true,
           },
           {
             name: "risk_level",
@@ -465,11 +506,12 @@ app.get("/api/workflows/available-steps", async (req, res) => {
             options: [
               { value: "low", label: "Low (catch obvious fraud)" },
               { value: "medium", label: "Medium (balanced approach)" },
-              { value: "high", label: "High (strict screening)" }
+              { value: "high", label: "High (strict screening)" },
             ],
-            description: "Higher sensitivity catches more fraud but may flag legitimate payments",
+            description:
+              "Higher sensitivity catches more fraud but may flag legitimate payments",
             default: "medium",
-            required: true
+            required: true,
           },
           {
             name: "on_fraud_detected",
@@ -478,13 +520,13 @@ app.get("/api/workflows/available-steps", async (req, res) => {
             options: [
               { value: "block", label: "Block Payment Immediately" },
               { value: "flag", label: "Flag for Manual Review" },
-              { value: "notify", label: "Notify Customer for Verification" }
+              { value: "notify", label: "Notify Customer for Verification" },
             ],
             description: "How to handle payments flagged as fraudulent",
             default: "block",
-            required: true
-          }
-        ]
+            required: true,
+          },
+        ],
       },
       {
         id: "compliance_check",
@@ -495,7 +537,7 @@ app.get("/api/workflows/available-steps", async (req, res) => {
         insert_after: "validate_account",
         activity_name: "performComplianceCheck",
         estimated_time: "200-500ms",
-        business_value: "Ensures regulatory compliance"
+        business_value: "Ensures regulatory compliance",
       },
       {
         id: "customer_notification",
@@ -506,50 +548,82 @@ app.get("/api/workflows/available-steps", async (req, res) => {
         insert_after: "complete_payment",
         activity_name: "sendCustomerNotification",
         estimated_time: "100-200ms",
-        business_value: "Improves customer awareness and satisfaction"
-      }
+        business_value: "Improves customer awareness and satisfaction",
+      },
     ];
 
     res.json(availableSteps);
   } catch (error) {
-    console.error('❌ Error fetching available steps:', error);
-    res.status(500).json({ error: 'Failed to fetch available steps' });
+    console.error("❌ Error fetching available steps:", error);
+    res.status(500).json({ error: "Failed to fetch available steps" });
   }
 });
 
 // 10. Configure new workflow version (PM adds steps)
 app.post("/api/workflows/configure", async (req, res) => {
   try {
-    const { step_id, step_config, workflow_name, workflow_description } = req.body;
+    const { step_id, step_config, workflow_name, workflow_description } =
+      req.body;
 
-    console.log('🔧 PM configuring workflow:', { step_id, step_config, workflow_name });
+    console.log("🔧 PM configuring workflow:", {
+      step_id,
+      step_config,
+      workflow_name,
+    });
 
     // Validate required parameters
     if (!step_id) {
-      return res.status(400).json({ error: 'step_id is required' });
+      return res.status(400).json({ error: "step_id is required" });
     }
 
     // Get base v1 workflow configuration
     const v1Config = {
       steps: [
-        { id: "create_payment_request", name: "Create Payment Request", order: 1, activity_name: "createPaymentRequest" },
-        { id: "validate_account", name: "Validate Source Account", order: 2, activity_name: "validateAccount" },
-        { id: "debit_account", name: "Debit Source Account", order: 3, activity_name: "debitAccount" },
-        { id: "credit_account", name: "Credit Destination Account", order: 4, activity_name: "creditAccount" },
-        { id: "complete_payment", name: "Complete Payment", order: 5, activity_name: "updatePaymentStatus" }
-      ]
+        {
+          id: "create_payment_request",
+          name: "Create Payment Request",
+          order: 1,
+          activity_name: "createPaymentRequest",
+        },
+        {
+          id: "validate_account",
+          name: "Validate Source Account",
+          order: 2,
+          activity_name: "validateAccount",
+        },
+        {
+          id: "debit_account",
+          name: "Debit Source Account",
+          order: 3,
+          activity_name: "debitAccount",
+        },
+        {
+          id: "credit_account",
+          name: "Credit Destination Account",
+          order: 4,
+          activity_name: "creditAccount",
+        },
+        {
+          id: "complete_payment",
+          name: "Complete Payment",
+          order: 5,
+          activity_name: "updatePaymentStatus",
+        },
+      ],
     };
 
     // Create new steps array with fraud check inserted
     const newSteps = [...v1Config.steps];
 
     // Find insertion point (after validate_account)
-    const insertAfterIndex = newSteps.findIndex(step => step.id === 'validate_account');
+    const insertAfterIndex = newSteps.findIndex(
+      (step) => step.id === "validate_account",
+    );
     const insertIndex = insertAfterIndex + 1;
 
     // Create the new step based on step_id
     let newStep;
-    if (step_id === 'fraud_check') {
+    if (step_id === "fraud_check") {
       newStep = {
         id: "fraud_check",
         name: "Fraud Check",
@@ -564,15 +638,16 @@ app.post("/api/workflows/configure", async (req, res) => {
         config: {
           amount_threshold: step_config?.amount_threshold || 1000,
           risk_level: step_config?.risk_level || "medium",
-          on_fraud_detected: step_config?.on_fraud_detected || "block"
+          on_fraud_detected: step_config?.on_fraud_detected || "block",
         },
-        highlight: true
+        highlight: true,
       };
     } else {
       // Generic step for other types
       newStep = {
         id: step_id,
-        name: step_id.charAt(0).toUpperCase() + step_id.slice(1).replace('_', ' '),
+        name:
+          step_id.charAt(0).toUpperCase() + step_id.slice(1).replace("_", " "),
         description: `Custom ${step_id} step`,
         order: insertIndex + 1,
         service: "custom",
@@ -580,7 +655,7 @@ app.post("/api/workflows/configure", async (req, res) => {
         configurable: true,
         added_by: "pm_user",
         added_at: new Date().toISOString(),
-        config: step_config || {}
+        config: step_config || {},
       };
     }
 
@@ -594,7 +669,9 @@ app.post("/api/workflows/configure", async (req, res) => {
     const v2Config = {
       version: "2.0",
       name: workflow_name || `Payment Flow with ${newStep.name}`,
-      description: workflow_description || `Enhanced payment processing with ${newStep.name.toLowerCase()}`,
+      description:
+        workflow_description ||
+        `Enhanced payment processing with ${newStep.name.toLowerCase()}`,
       status: "configured",
       created_by: "pm_user",
       created_at: new Date().toISOString(),
@@ -605,11 +682,11 @@ app.post("/api/workflows/configure", async (req, res) => {
         added_steps: [newStep.name],
         insertion_point: `After step ${insertAfterIndex + 1} (${v1Config.steps[insertAfterIndex].name})`,
         total_steps: newSteps.length,
-        configuration_time: new Date().toISOString()
-      }
+        configuration_time: new Date().toISOString(),
+      },
     };
 
-    console.log('✅ New v2 workflow configured successfully');
+    console.log("✅ New v2 workflow configured successfully");
 
     res.json({
       success: true,
@@ -619,13 +696,14 @@ app.post("/api/workflows/configure", async (req, res) => {
         before: `${v1Config.steps.length} steps`,
         after: `${newSteps.length} steps`,
         new_step: newStep.name,
-        position: insertIndex + 1
-      }
+        position: insertIndex + 1,
+      },
     });
-
   } catch (error) {
-    console.error('❌ Workflow configuration error:', error);
-    res.status(500).json({ error: 'Failed to configure workflow', details: error.message });
+    console.error("❌ Workflow configuration error:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to configure workflow", details: error.message });
   }
 });
 
@@ -634,7 +712,7 @@ app.post("/api/workflows/deploy", async (req, res) => {
   try {
     const { version, strategy, traffic_split } = req.body;
 
-    console.log('🚀 Deploying workflow version:', { version, strategy });
+    console.log("🚀 Deploying workflow version:", { version, strategy });
 
     // Simulate deployment validation
     if (version === "2.0") {
@@ -642,9 +720,9 @@ app.post("/api/workflows/deploy", async (req, res) => {
       // 1. Validate v2 workflow definition
       // 2. Deploy to Temporal
       // 3. Update traffic routing
-      console.log('📋 Validating v2 workflow with fraud check...');
-      console.log('🔧 Updating Temporal workflow definition...');
-      console.log('🚦 Configuring traffic routing...');
+      console.log("📋 Validating v2 workflow with fraud check...");
+      console.log("🔧 Updating Temporal workflow definition...");
+      console.log("🚦 Configuring traffic routing...");
     }
 
     const deployment = {
@@ -654,33 +732,36 @@ app.post("/api/workflows/deploy", async (req, res) => {
       status: "deployed",
       deployed_at: new Date().toISOString(),
       deployed_by: "pm_user",
-      traffic_allocation: strategy === "canary" 
-        ? { v1: 80, v2: 20 } 
-        : strategy === "blue_green"
-        ? { v1: 0, v2: 100 }
-        : { v1: 50, v2: 50 },
+      traffic_allocation:
+        strategy === "canary"
+          ? { v1: 80, v2: 20 }
+          : strategy === "blue_green"
+            ? { v1: 0, v2: 100 }
+            : { v1: 50, v2: 50 },
       rollback_available: true,
-      deployment_notes: strategy === "canary" 
-        ? "20% of traffic routing to v2 with fraud checks"
-        : "Full deployment of v2 workflow",
+      deployment_notes:
+        strategy === "canary"
+          ? "20% of traffic routing to v2 with fraud checks"
+          : "Full deployment of v2 workflow",
       estimated_impact: {
         fraud_reduction: "Expected 85% reduction in fraud losses",
         processing_time: "Additional 150-300ms per payment",
-        customer_experience: "Minimal impact, improved security"
-      }
+        customer_experience: "Minimal impact, improved security",
+      },
     };
 
-    console.log('✅ Workflow deployed successfully:', deployment.deployment_id);
+    console.log("✅ Workflow deployed successfully:", deployment.deployment_id);
 
     res.json({
       success: true,
       message: `Workflow ${version} deployed successfully using ${strategy} strategy`,
-      deployment: deployment
+      deployment: deployment,
     });
-
   } catch (error) {
-    console.error('❌ Deployment error:', error);
-    res.status(500).json({ error: 'Failed to deploy workflow', details: error.message });
+    console.error("❌ Deployment error:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to deploy workflow", details: error.message });
   }
 });
 
@@ -692,38 +773,39 @@ app.get("/api/workflows/deployment-history", async (req, res) => {
         deployment_id: "deploy_baseline",
         version: "1.0",
         strategy: "full",
-        status: "active", 
+        status: "active",
         deployed_at: "2025-01-01T00:00:00Z",
         deployed_by: "system",
         traffic_percentage: 80,
         is_current: false,
-        notes: "Baseline Temporal orchestrated workflow"
+        notes: "Baseline Temporal orchestrated workflow",
       },
       {
-        deployment_id: `deploy_${Date.now()}`, 
+        deployment_id: `deploy_${Date.now()}`,
         version: "2.0",
         strategy: "canary",
         status: "active",
         deployed_at: new Date().toISOString(),
-        deployed_by: "pm_user", 
+        deployed_by: "pm_user",
         traffic_percentage: 20,
         is_current: true,
-        notes: "Added fraud check step via PM configuration"
-      }
+        notes: "Added fraud check step via PM configuration",
+      },
     ];
 
     res.json({
       deployments,
       summary: {
         total_deployments: deployments.length,
-        active_versions: deployments.filter(d => d.status === 'active').length,
+        active_versions: deployments.filter((d) => d.status === "active")
+          .length,
         latest_deployment: deployments[deployments.length - 1],
-        rollback_available: true
-      }
+        rollback_available: true,
+      },
     });
   } catch (error) {
-    console.error('❌ Error fetching deployment history:', error);
-    res.status(500).json({ error: 'Failed to fetch deployment history' });
+    console.error("❌ Error fetching deployment history:", error);
+    res.status(500).json({ error: "Failed to fetch deployment history" });
   }
 });
 
@@ -732,11 +814,11 @@ app.post("/api/workflows/rollback", async (req, res) => {
   try {
     const { target_version, reason } = req.body;
 
-    console.log('🔄 Initiating workflow rollback:', { target_version, reason });
+    console.log("🔄 Initiating workflow rollback:", { target_version, reason });
 
     // Simulate rollback process
-    console.log('🚦 Updating traffic routing to 100% v1.0...');
-    console.log('📋 Preserving v2.0 configuration for future use...');
+    console.log("🚦 Updating traffic routing to 100% v1.0...");
+    console.log("📋 Preserving v2.0 configuration for future use...");
 
     const rollback = {
       rollback_id: `rollback_${Date.now()}`,
@@ -750,21 +832,22 @@ app.post("/api/workflows/rollback", async (req, res) => {
       impact: {
         fraud_checks_disabled: true,
         processing_time_improvement: "150-300ms faster per payment",
-        rollback_time: "< 30 seconds"
-      }
+        rollback_time: "< 30 seconds",
+      },
     };
 
-    console.log('✅ Rollback completed successfully');
+    console.log("✅ Rollback completed successfully");
 
     res.json({
       success: true,
       message: `Successfully rolled back to version ${target_version}`,
-      rollback: rollback
+      rollback: rollback,
     });
-
   } catch (error) {
-    console.error('❌ Rollback error:', error);
-    res.status(500).json({ error: 'Failed to rollback workflow', details: error.message });
+    console.error("❌ Rollback error:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to rollback workflow", details: error.message });
   }
 });
 
@@ -773,24 +856,24 @@ app.get("/api/workflows/status", async (req, res) => {
   try {
     const status = {
       active_versions: [
-        { 
-          version: "1.0", 
-          traffic: 80, 
+        {
+          version: "1.0",
+          traffic: 80,
           status: "stable",
           payments_processed_today: 998,
           avg_processing_time: "3.2s",
-          success_rate: 99.8
+          success_rate: 99.8,
         },
-        { 
-          version: "2.0", 
-          traffic: 20, 
+        {
+          version: "2.0",
+          traffic: 20,
           status: "canary",
           payments_processed_today: 249,
-          avg_processing_time: "3.5s", 
+          avg_processing_time: "3.5s",
           success_rate: 99.6,
           fraud_checks_performed: 249,
-          fraud_blocks: 3
-        }
+          fraud_blocks: 3,
+        },
       ],
       overall_metrics: {
         total_payments_today: 1247,
@@ -799,26 +882,26 @@ app.get("/api/workflows/status", async (req, res) => {
         fraud_prevention: {
           checks_performed: 249,
           threats_blocked: 3,
-          false_positives: 0
-        }
+          false_positives: 0,
+        },
       },
       system_health: {
         temporal_cluster: "healthy",
-        fraud_service: "healthy", 
-        mockapi_backend: "healthy"
+        fraud_service: "healthy",
+        mockapi_backend: "healthy",
       },
       deployment_info: {
         last_deployment: new Date().toISOString(),
         deployed_by: "pm_user",
         next_deployment_window: "Available anytime",
-        rollback_ready: true
-      }
+        rollback_ready: true,
+      },
     };
 
     res.json(status);
   } catch (error) {
-    console.error('❌ Error fetching workflow status:', error);
-    res.status(500).json({ error: 'Failed to fetch workflow status' });
+    console.error("❌ Error fetching workflow status:", error);
+    res.status(500).json({ error: "Failed to fetch workflow status" });
   }
 });
 
