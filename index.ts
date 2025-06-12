@@ -925,9 +925,9 @@ app.use(
 async function startServer() {
   await initializeTemporal();
 
-  app.listen(PORT, () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log("🚀 Banking Workflow API Server Started");
-    console.log(`📡 Server running on http://localhost:${PORT}`);
+    console.log(`📡 Server running on http://0.0.0.0:${PORT}`);
     console.log("🔗 Ready for Appsmith integration");
     console.log("\n📋 Available Endpoints:");
     console.log("  GET  /api/health          - System health check");
