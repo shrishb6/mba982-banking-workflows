@@ -2,6 +2,7 @@
 import express from "express";
 import cors from "cors";
 import { Client, Connection } from "@temporalio/client";
+import axios from "axios";
 
 // MockAPI base URL
 const MOCKAPI_BASE_URL = "https://68358740cd78db2058c203ce.mockapi.io";
@@ -57,30 +58,25 @@ app.get("/api/health", (req, res) => {
 
 // 2. Get all accounts (for dropdowns in Appsmith)
 app.get("/api/accounts", async (req, res) => {
+  console.log("🟢 ACCOUNTS endpoint hit!");
+
   try {
-    console.log("🔍 Fetching accounts from MockAPI...");
+    console.log("🔍 About to call MockAPI...");
     const response = await axios.get(`${MOCKAPI_BASE_URL}/accounts`);
-    console.log("✅ MockAPI response received:", response.data.length, "accounts");
+    console.log("✅ MockAPI responded with status:", response.status);
+    console.log("✅ Data length:", response.data.length);
 
-    const accounts = response.data.map((account: any) => {
-      console.log("Processing account:", account.accountNumber, "Type:", account.type);
-      return {
-        id: account.id,
-        accountNumber: account.accountNumber,
-        customerId: account.customerId,
-        balance: account.balance,
-        currency: account.currency,
-        status: account.status,
-        accountType: account.type, // This should work based on your MockAPI data
-        displayName: `${account.accountNumber} (${account.type}) - ${account.currency} ${account.balance}`,
-      };
-    });
-
-    console.log("✅ Processed accounts:", accounts.length);
-    res.json(accounts);
+    // Send raw MockAPI data first to test
+    res.json(response.data);
   } catch (error) {
-    console.error("❌ Failed to fetch accounts:", error.message);
-    res.status(500).json({ error: "Failed to fetch accounts" });
+    console.error("❌ Error calling MockAPI:", error.message);
+    if (error.response) {
+      console.error("❌ Response status:", error.response.status);
+      console.error("❌ Response data:", error.response.data);
+    }
+    res
+      .status(500)
+      .json({ error: "Failed to fetch accounts", details: error.message });
   }
 });
 
@@ -925,7 +921,7 @@ app.use(
 async function startServer() {
   await initializeTemporal();
 
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, "0.0.0.0", () => {
     console.log("🚀 Banking Workflow API Server Started");
     console.log(`📡 Server running on http://0.0.0.0:${PORT}`);
     console.log("🔗 Ready for Appsmith integration");
