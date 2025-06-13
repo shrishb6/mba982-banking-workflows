@@ -155,6 +155,98 @@ app.post("/api/payments/start", async (req, res) => {
     res.status(500).json({ error: "Failed to start payment workflow" });
   }
 });
+// 3A. Process Legacy Payment (Monolithic - No Temporal)
+app.post("/api/payments/start-legacy", async (req, res) => {
+  try {
+    const { fromAccount, toAccount, amount, currency, description, version } = req.body;
+
+    // Validate required fields
+    if (!fromAccount || !toAccount || !amount || !version) {
+      return res.status(400).json({
+        error: "Missing required fields: fromAccount, toAccount, amount, version"
+      });
+    }
+
+    // Generate legacy workflow ID
+    const workflowId = `legacy-${version}-${Date.now()}`;
+
+    console.log(`🏛️ LEGACY ${version.toUpperCase()} PROCESSING: ${fromAccount} → ${toAccount} | $${amount}`);
+
+    // MONOLITHIC PROCESSING - Direct API calls, no Temporal
+    await processLegacyPayment(workflowId, version, { fromAccount, toAccount, amount, currency, description });
+
+    res.json({
+      success: true,
+      workflowId,
+      version,
+      architecture: "legacy_monolithic",
+      message: `Legacy ${version} payment processed without orchestration`,
+      processing_type: "synchronous_monolithic",
+      audit_granularity: version === "v2" ? "enhanced" : "basic"
+    });
+
+  } catch (error) {
+    console.error("Legacy payment failed:", error);
+    res.status(500).json({ error: "Legacy payment processing failed" });
+  }
+});
+
+// Legacy processing function (monolithic approach)
+async function processLegacyPayment(workflowId: string, version: string, paymentData: any) {
+  const { fromAccount, toAccount, amount } = paymentData;
+
+  try {
+    // STEP 1: Always validate account
+    await logAuditEvent(workflowId, "VALIDATE_ACCOUNT", "SUCCESS", 
+      "Legacy monolithic account validation", { amount, fromAccount });
+
+    // STEP 2: Fraud check only in v2 (embedded in monolith)
+    if (version === "v2") {
+      const fraudStatus = amount > 5000 ? "FAILED" : "SUCCESS";
+      await logAuditEvent(workflowId, "FRAUD_CHECK", fraudStatus, 
+        "Embedded fraud check in legacy monolith", { amount, riskScore: amount > 5000 ? 0.9 : 0.2 });
+
+      if (fraudStatus === "FAILED") {
+        throw new Error("Fraud detected in legacy system");
+      }
+    }
+
+    // STEP 3: Debit account (legacy does this in monolith but logs separately)
+    await logAuditEvent(workflowId, "DEBIT_ACCOUNT", "SUCCESS", 
+      "Legacy monolithic debit processing", { fromAccount, amount });
+
+    // STEP 4: Credit account (legacy does this in monolith but logs separately)  
+    await logAuditEvent(workflowId, "CREDIT_ACCOUNT", "SUCCESS", 
+      "Legacy monolithic credit processing", { toAccount, amount });
+
+    // STEP 5: Complete payment
+    await logAuditEvent(workflowId, "PROCESS_PAYMENT", "SUCCESS", 
+      "Monolithic payment completion (all steps executed in single service)", { fromAccount, toAccount, amount });
+
+  } catch (error) {
+    await logAuditEvent(workflowId, "PAYMENT_FAILED", "FAILED", error.message, { amount });
+    throw error;
+  }
+}
+
+// Helper function to log audit events to MockAPI
+async function logAuditEvent(workflowId: string, step: string, status: string, message: string, metadata: any = {}) {
+  try {
+    await axios.post(`${MOCKAPI_BASE_URL}/audit_logs`, {
+      workflowId,
+      step,
+      status,
+      message,
+      timestamp: new Date().toISOString(),
+      duration: Math.floor(Math.random() * 200 + 50), // Simulate processing time
+      actor: "SYSTEM",
+      version: workflowId.includes("v2") ? "v2" : "v1",
+      metadata
+    });
+  } catch (error) {
+    console.error("Failed to log audit event:", error);
+  }
+}
 
 // 4. Get workflow status with step details (CORRECTED - SINGLE ENDPOINT)
 app.get("/api/payments/status/:workflowId", async (req, res) => {
